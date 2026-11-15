@@ -121,7 +121,7 @@ html = html.replace(
   });
   render();""", 1)
 
-open(OUT, 'w', encoding='utf-8').write(html)
+open(OUT, 'w', encoding='utf-8', newline='\n').write(html)
 checks = {
     'masthead': html.count('<header class="wrap masthead">'),
     'hero': html.count('<section class="wrap hero">'),
