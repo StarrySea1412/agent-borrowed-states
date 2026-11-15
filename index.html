@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8"/>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Crect x=%224%22 y=%223%22 width=%2216%22 height=%2218%22 rx=%221.5%22 fill=%22%23faf9f3%22 stroke=%22%23333e48%22/%3E%3Ccircle cx=%229%22 cy=%229%22 r=%222.4%22 fill=%22%23b5482a%22/%3E%3C/svg%3E"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="description" content="造物手记 VOL.14 · 借来的状态机——Easel 接入 OpenClaw 的三天，五起事故的完整复盘：双网关分裂、僵尸启动记录、PID 复用、200 谎报、无限重试烧额度。"/>
+<title>借来的状态机 · 造物手记 VOL.14</title>
+<style>
+/* 《住进机房的 Agent》· 造物手记 VOL.12
+   机架走线图：机房纸、石墨蓝黑、安全橙、LED 绿 —— 一面挂满巡检面板的机架立面。 */
+@font-face{font-family:"LXGW WenKai";src:url("assets/fonts/wenkai-regular.woff2") format("woff2");font-weight:300 599;font-style:normal;font-display:swap}
+@font-face{font-family:"LXGW WenKai";src:url("assets/fonts/wenkai-medium.woff2") format("woff2");font-weight:600 900;font-style:normal;font-display:swap}
+:root{
+  --paper:#f1f0ea;--paper-deep:#e7e5da;--card:#faf9f3;--card2:#f1efe4;
+  --ink:#2a3138;--ink-soft:#4d565e;--muted:#7b8288;--faint:#a6a89f;
+  --line:#d8d6cb;--line-soft:#e4e2d5;--line-strong:#b7b5a6;
+  --rail:#333e48;--rail-deep:#25303a;--rail-soft:rgba(51,62,72,.1);--rail-line:rgba(51,62,72,.4);
+  --signal:#b5482a;--signal-soft:rgba(181,72,42,.1);
+  --clock:#3f8f5f;--clock-soft:rgba(63,143,95,.12);
+  --steel:#5d6d74;--amber:#a8842c;--amber-soft:rgba(168,132,44,.12);--steel-soft:rgba(93,109,116,.11);
+  --plum:#3e6e8e;--plum-soft:rgba(62,110,142,.1);
+  --code-bg:#232a2e;--code-ink:#cfd6d3;
+  --serif:"LXGW WenKai","Songti SC","STSong","Noto Serif CJK SC",serif;
+  --sans:"LXGW WenKai",-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+  --hard:4px 4px 0 rgba(84,92,88,.16);
+  --hard-sm:2px 2px 0 rgba(84,92,88,.15);
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth;scroll-padding-top:26px}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);line-height:1.95;-webkit-font-smoothing:antialiased;text-spacing:ideograph-alpha;
+  background-image:
+    radial-gradient(circle,rgba(70,80,78,.1) 1.1px,transparent 1.3px),
+    radial-gradient(circle,rgba(70,80,78,.055) 1.1px,transparent 1.3px),
+    linear-gradient(rgba(51,62,72,.05) 1px,transparent 1px);
+  background-size:26px 26px,104px 104px,100% 92px;
+  background-position:-1px -1px}
+::selection{background:#f0e2c8;color:#2a2410}
+a{color:var(--rail-deep);text-underline-offset:4px;text-decoration-thickness:1px}
+a:hover{color:var(--signal)}
+button,a,input,select{touch-action:manipulation}
+button{cursor:pointer;color:inherit;font:inherit}
+button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:3px solid var(--signal);outline-offset:3px}
+img{display:block;max-width:100%;height:auto}
+p{margin:0 0 1.22em}
+h1,h2,h3,h4{line-height:1.45;text-wrap:balance;margin:0}
+h1,h2,h3{font-family:var(--serif)}
+strong{font-weight:650;color:#1d2429}
+code{font-family:var(--mono);font-size:.85em;background:var(--rail-soft);color:#2b4a50;padding:.1em .36em;border-radius:2px;overflow-wrap:anywhere;border-bottom:1px solid rgba(53,86,92,.2)}
+em{font-style:normal;color:var(--signal);background:linear-gradient(transparent 62%,rgba(217,111,31,.15) 62%)}
+.progress{position:fixed;inset:0 auto auto 0;height:3px;width:100%;background:linear-gradient(90deg,var(--rail),var(--clock),var(--signal));transform:scaleX(0);transform-origin:left;z-index:60;pointer-events:none}
+.wrap{max-width:1180px;margin:auto;padding-inline:36px}
+
+/* masthead + hero + stats */
+.masthead{display:flex;align-items:center;justify-content:space-between;gap:18px;padding-block:20px 14px;border-bottom:1.5px solid var(--line-strong);font-size:12px;letter-spacing:.09em;color:var(--muted)}
+.brand{display:flex;align-items:center;gap:11px;font-weight:650;color:var(--ink)}
+.brand-mark{width:25px;height:25px;display:grid;place-items:center;border:1.5px solid var(--line-strong);border-radius:2px;background:var(--card);box-shadow:var(--hard-sm)}
+.brand-mark svg{width:16px;height:16px;display:block}
+.brand small{font-family:var(--mono);font-size:10px;letter-spacing:.14em;color:var(--signal);font-weight:700}
+.edition{font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;display:flex;gap:14px;align-items:center}
+.edition .pack{display:inline-flex;align-items:center;gap:7px;color:var(--rail-deep)}
+.pack-dot{width:8px;height:8px;border:1.5px solid var(--signal);background:var(--signal-soft);transform:rotate(45deg)}
+.hero{padding-block:52px 38px;display:grid;grid-template-columns:1.06fr .94fr;gap:50px;align-items:center}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;color:var(--muted);margin:0 0 22px;background:var(--card);border:1px dashed var(--rail-line);padding:6px 13px 6px 8px;border-radius:2px}
+.eyebrow span{color:var(--rail-deep);letter-spacing:.15em;font-weight:700;padding-right:11px;border-right:1px dashed var(--rail-line)}
+.hero h1{font-size:clamp(44px,5vw,70px);font-weight:800;line-height:1.14;letter-spacing:-.035em;margin:0 0 20px}
+.hero h1 em{color:var(--rail-deep);background:none}
+.hero h1 .sub{display:block;font-size:.4em;font-weight:400;letter-spacing:.02em;color:var(--ink-soft);margin-top:14px;line-height:1.72}
+.dek-wrap{margin:0 0 24px;max-width:566px;border-left:3px solid var(--signal);padding-left:18px}
+.dek-tag{font-family:var(--mono);font-size:11px;font-weight:700;color:var(--signal);letter-spacing:.09em;margin:0 0 8px}
+.dek{font-size:16.5px;line-height:1.9;color:var(--ink-soft);margin:0}
+.hero-meta{display:flex;flex-wrap:wrap;gap:8px}
+.pill{font-family:var(--mono);font-size:10.5px;letter-spacing:.04em;color:var(--muted);border:1px solid var(--line);border-radius:2px;padding:6px 11px;background:var(--card);box-shadow:var(--hard-sm)}
+.pill b{color:var(--ink);font-weight:700}
+.art{margin:0;position:relative}
+.screen{border:1.5px solid var(--ink);background:var(--card);padding:9px;box-shadow:6px 6px 0 rgba(84,92,88,.2);border-radius:2px}
+.screen-img{position:relative;overflow:hidden;background:#e6e3d6;border:1px solid var(--line)}
+.screen-img img{width:100%;aspect-ratio:4/3;object-fit:cover;filter:saturate(.96)}
+.screen-img::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(rgba(51,62,72,.05),rgba(168,132,44,.05));mix-blend-mode:multiply}
+.tc-bar{display:flex;justify-content:space-between;align-items:center;gap:10px;font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--muted);padding:8px 3px 1px}
+.tc-bar .tc{color:var(--rail-deep)}
+.art figcaption{font-size:11.5px;color:var(--faint);margin-top:9px;line-height:1.7;display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-family:var(--mono);letter-spacing:.02em}
+.art figcaption b{color:var(--signal);font-weight:700}
+.stats{border-block:1.5px solid var(--line-strong);background:rgba(250,249,242,.75)}
+.stats-inner{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line)}
+.stat{background:var(--card);padding:15px 20px}
+.stat b{display:block;font-family:var(--mono);font-size:23px;letter-spacing:-.02em;color:var(--rail-deep);line-height:1.25}
+.stat b span{font-size:11px;color:var(--faint);letter-spacing:.04em;margin-left:3px}
+.stat small{display:block;font-size:11px;color:var(--muted);letter-spacing:.03em;margin-top:3px}
+
+/* opening + toc + chapters */
+.opening{padding-block:46px 18px}
+.jd-card{margin:0 0 28px;border:1px solid var(--line-strong);border-left:4px solid var(--signal);background:var(--card);padding:15px 19px 12px;border-radius:2px;box-shadow:var(--hard)}
+.jd-tag{font-family:var(--mono);font-size:10px;letter-spacing:.09em;color:var(--faint);margin:0 0 8px}
+.jd-text{font-size:16px;line-height:1.95;color:var(--ink);margin:0 0 8px}
+.jd-note{font-size:12px;color:var(--muted);margin:0;line-height:1.8}
+.jd-list{margin:12px 0 0;padding:0;list-style:none;display:grid;gap:7px}
+.jd-list li{font-size:13.5px;line-height:1.8;color:var(--ink-soft);display:grid;grid-template-columns:34px 1fr;gap:10px;align-items:baseline}
+.jd-list li i{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--signal);font-weight:700}
+.lead{font-size:19.5px;line-height:1.96;color:var(--ink)}
+.lead::first-letter{float:left;font-size:62px;line-height:.86;padding:8px 12px 0 0;color:var(--signal);font-weight:800}
+.scope{font-size:12.5px;color:var(--muted);border-top:1px solid var(--line);padding-top:14px;margin-top:26px;font-family:var(--mono);line-height:1.85}
+.toc-head{display:flex;justify-content:space-between;align-items:baseline;border-bottom:1px solid var(--line-strong);padding-bottom:8px;margin:30px 0 0;font-family:var(--mono);font-size:11px;letter-spacing:.11em;color:var(--faint)}
+.toc{display:grid;grid-template-columns:repeat(2,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-top:0;margin:0 0 54px}
+.toc a{background:var(--card);padding:13px 17px;text-decoration:none;color:var(--ink);display:grid;grid-template-columns:56px 1fr;gap:11px;align-items:baseline;transition:background .16s}
+.toc a:hover{background:var(--card2);color:var(--ink)}
+.toc a i{font-family:var(--mono);font-style:normal;font-size:10.5px;color:var(--signal);letter-spacing:.03em}
+.toc a span{font-size:14px}
+.toc a small{display:block;font-size:11px;color:var(--faint);margin-top:2px;line-height:1.6}
+.chapter{padding-block:48px 16px;border-top:1px solid var(--line)}
+.ch-head{display:grid;grid-template-columns:88px 1fr;gap:22px;align-items:start;margin:0 auto 30px;max-width:980px}
+.ch-num{font-family:var(--mono);font-size:13px;color:var(--rail-deep);letter-spacing:.06em;padding-top:12px;border-top:2px solid var(--rail);line-height:1.5}
+.ch-num b{display:block;font-size:33px;color:var(--ink);letter-spacing:-.02em;font-weight:700;line-height:1.1}
+.ch-title h2{font-size:clamp(29px,3.3vw,42px);font-weight:750;letter-spacing:-.024em;line-height:1.25}
+.ch-title p{color:var(--muted);font-size:14px;margin:8px 0 0;line-height:1.8;max-width:640px}
+.ch-body{max-width:768px;margin-inline:auto}
+.ch-body h3{font-size:22px;font-weight:700;margin:40px 0 13px;letter-spacing:-.01em;padding-left:12px;border-left:3px solid var(--signal)}
+.ch-body h4{font-size:16px;font-weight:650;margin:24px 0 8px;color:var(--rail-deep)}
+.ch-body ul,.ch-body ol{padding-left:1.35em;margin:0 0 1.25em}
+.ch-body li{margin:.38em 0}
+.ch-body li::marker{color:var(--signal)}
+.lede{font-size:17px;color:var(--ink-soft);line-height:1.95}
+.pull{border-left:3px solid var(--signal);background:linear-gradient(90deg,var(--signal-soft),transparent 72%);padding:16px 21px;margin:26px 0;font-family:var(--serif);font-size:19px;line-height:1.85;color:var(--ink)}
+.pull b{color:var(--signal);font-weight:700}
+.note{font-size:13px;color:var(--muted);border-left:2px solid var(--line-strong);padding-left:14px;margin:20px 0;line-height:1.85}
+.note b{color:var(--ink-soft)}
+.fig{margin:30px auto;max-width:980px;position:relative;left:50%;transform:translateX(-50%);width:min(940px,calc(100vw - 72px))}
+.fig .frame{border:1.5px solid var(--line-strong);background:var(--card);padding:14px;box-shadow:var(--hard);border-radius:2px}
+.fig figcaption{font-family:var(--mono);font-size:11.5px;color:var(--faint);letter-spacing:.02em;margin-top:8px;line-height:1.75;display:flex;gap:10px;align-items:baseline}
+.fig figcaption b{color:var(--signal);font-weight:700}
+.layers-cap{font-family:var(--mono);font-size:10.5px;letter-spacing:.07em;color:var(--faint);margin:0 0 13px}
+.layers{display:grid;gap:0}
+.layer{display:grid;grid-template-columns:10px 44px 128px 1fr;gap:10px;align-items:stretch;border:1px solid var(--line);border-top:0;background:var(--card);padding:11px 14px}
+.layer:first-of-type{border-top:1px solid var(--line)}
+.layer i{font-style:normal;font-family:var(--mono);font-size:11px;color:var(--faint);padding-top:2px}
+.layer b{font-size:14px;line-height:1.5}
+.layer b small{display:block;font-family:var(--mono);font-size:9.5px;color:var(--faint);font-weight:400;letter-spacing:.05em;margin-top:2px}
+.layer p{margin:0;font-size:12.8px;line-height:1.72;color:var(--ink-soft)}
+.layer p code{font-size:11px}
+.layer-mark{width:8px;border-radius:1px;margin-block:-11px;margin-left:-14px}
+.lm-1{background:var(--rail)}.lm-2{background:var(--steel)}.lm-3{background:var(--clock)}.lm-4{background:var(--signal)}.lm-5{background:var(--plum)}.lm-6{background:#6f6a50}
+
+/* code + table + demo chrome */
+.code{margin:22px 0;border:1.5px solid #2a3134;background:var(--code-bg);border-radius:3px;overflow:hidden;box-shadow:var(--hard)}
+.code-bar{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:7px 12px;border-bottom:1px solid #394247;font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:#95a3a0;background:#2b3438}
+.code-bar b{color:#d8c07a;font-weight:600}
+.code pre{margin:0;padding:14px 15px 16px;overflow-x:auto;font-family:var(--mono);font-size:12.3px;line-height:1.76;color:var(--code-ink);tab-size:2}
+.code pre .c{color:#6f7d78;font-style:italic}
+.code pre .k{color:#8fc4d0}
+.code pre .s{color:#c9bd84}
+.code pre .n{color:#e0a25c}
+.code pre .f{color:#9fd0b8}
+.tablewrap{overflow-x:auto;margin:22px 0;border:1px solid var(--line-strong);border-radius:2px;background:var(--card);box-shadow:var(--hard-sm)}
+table{border-collapse:collapse;width:100%;font-size:13.4px;min-width:560px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line-soft);vertical-align:top;line-height:1.7}
+th{background:var(--card2);font-family:var(--mono);font-size:10px;letter-spacing:.07em;color:var(--muted);font-weight:700}
+tr:last-child td{border-bottom:0}
+td b{color:#1d2429;font-weight:650}
+td code{font-size:11.3px}
+td.ok{color:var(--rail-deep)}td.warn{color:var(--clock)}
+.num{font-family:var(--mono);font-size:12.4px;color:var(--rail-deep);white-space:nowrap}
+.demo{max-width:1000px;margin:40px auto;border:1.5px solid var(--line-strong);background:var(--card);border-radius:3px;overflow:hidden;box-shadow:var(--hard)}
+.demo-head{display:flex;justify-content:space-between;align-items:center;gap:14px;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--card2);flex-wrap:wrap}
+.demo-tag{font-family:var(--mono);font-size:10px;letter-spacing:.09em;color:var(--signal);font-weight:700}
+.demo-title{font-size:15px;font-weight:650;margin-left:auto;display:flex;align-items:center;gap:9px}
+.demo-title .hint{font-family:var(--mono);font-size:10px;color:var(--faint);font-weight:400;letter-spacing:.02em}
+.demo-body{padding:16px 17px 15px}
+.controls{display:flex;flex-wrap:wrap;gap:14px 22px;align-items:flex-end;padding-bottom:13px;border-bottom:1px solid var(--line-soft);margin-bottom:13px}
+.ctl{min-width:140px;flex:1}
+.ctl-btn{flex:0 0 auto;display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.ctl label{display:flex;justify-content:space-between;align-items:baseline;font-family:var(--mono);font-size:10px;letter-spacing:.05em;color:var(--muted);margin-bottom:5px}
+.ctl label b{color:var(--rail-deep);font-weight:700;font-size:12px}
+button.run{background:var(--rail);color:#f6f8f5;font-weight:700;border:0;border-radius:2px;padding:8px 15px;font-size:13px;letter-spacing:.02em;box-shadow:var(--hard-sm)}
+button.run:hover{background:var(--rail-deep)}
+button.ghost{background:transparent;border:1px solid var(--line-strong);color:var(--muted);border-radius:2px;padding:8px 13px;font-size:12.5px}
+button.ghost:hover:not(:disabled){border-color:var(--signal);color:var(--signal)}
+button.ghost:disabled{opacity:.42;cursor:not-allowed}
+input[type=range]{appearance:none;width:100%;height:22px;background:transparent;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:3px;background:var(--line-strong);border-radius:2px}
+input[type=range]::-webkit-slider-thumb{appearance:none;width:14px;height:14px;border-radius:50%;background:var(--rail);border:2px solid var(--card);margin-top:-6px;box-shadow:0 0 0 1px var(--rail)}
+input[type=text],select{background:var(--card);border:1px solid var(--line-strong);border-radius:2px;padding:7px 9px;font-family:var(--sans);font-size:13.4px;color:var(--ink);width:100%}
+input[type=text]:focus,select:focus{outline:2px solid var(--signal);outline-offset:1px}
+.switch{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:10.5px;color:var(--muted);letter-spacing:.01em;cursor:pointer;user-select:none}
+.switch input{appearance:none;width:32px;height:17px;border-radius:9px;background:var(--line-strong);position:relative;cursor:pointer;transition:background .16s}
+.switch input::after{content:"";position:absolute;top:2px;left:2px;width:13px;height:13px;border-radius:50%;background:#fff;transition:transform .16s}
+.switch input:checked{background:var(--rail)}
+.switch input:checked::after{transform:translateX(15px)}
+.hintline{font-family:var(--mono);font-size:10.5px;color:var(--faint);line-height:1.7}
+.demo-foot{border-top:1px solid var(--line-soft);padding:9px 16px;font-family:var(--mono);font-size:10px;color:var(--faint);letter-spacing:.01em;line-height:1.75}
+.demo-foot b{color:var(--rail-deep);font-weight:600}
+
+/* epilogue */
+.epilogue{max-width:768px;margin:0 auto;padding-block:36px 16px}
+.epilogue h2{font-size:clamp(27px,3vw,37px);margin-bottom:15px}
+.rules{display:grid;gap:9px;margin:22px 0 26px}
+.rule{border:1px solid var(--line-strong);border-left:3px solid var(--rail);background:var(--card);border-radius:0 2px 2px 0;padding:13px 16px;box-shadow:var(--hard-sm)}
+.rule b{display:block;font-family:var(--mono);font-size:10.5px;letter-spacing:.09em;color:var(--rail-deep);margin-bottom:4px}
+.rule p{margin:0;font-size:14.5px;color:var(--ink-soft);line-height:1.82}
+.limits{border-top:1px solid var(--line);padding-top:17px;font-size:13.5px;color:var(--muted)}
+.limits b{color:var(--ink-soft)}
+.links{display:flex;flex-wrap:wrap;gap:8px;margin:22px 0 7px}
+.links a{font-family:var(--mono);font-size:11px;letter-spacing:.02em;border:1px solid var(--line-strong);padding:6px 11px;text-decoration:none;color:var(--rail-deep);background:var(--card);border-radius:2px}
+.links a:hover{border-color:var(--signal);color:var(--signal)}
+.site-foot{border-top:1.5px solid var(--line-strong);margin-top:48px;padding-block:20px 34px;display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;font-family:var(--mono);font-size:10.5px;letter-spacing:.03em;color:var(--faint)}
+.site-foot a{color:var(--muted)}
+.foot-note{font-size:10.5px;color:#8b8b7c;line-height:1.8;max-width:600px}
+
+@media (max-width:980px){
+  .hero{grid-template-columns:1fr;gap:28px;padding-block:38px 28px}
+  .hero h1{font-size:clamp(38px,7.6vw,54px)}
+  .stats-inner{grid-template-columns:repeat(2,1fr)}
+  .ch-head{grid-template-columns:62px 1fr;gap:15px}
+  .ch-num b{font-size:25px}
+  .ad-wrap,.tk-wrap,.ef-wrap,.pw-wrap{grid-template-columns:1fr}
+  .toc{grid-template-columns:1fr}
+  .layer{grid-template-columns:10px 34px 1fr;grid-template-rows:auto auto;gap:6px 10px}
+  .layer i{grid-row:1}
+  .layer b{grid-column:3}
+  .layer p{grid-column:3;grid-row:2}
+  .layer-mark{margin-block:-11px}
+  .ef-readout{grid-template-columns:repeat(2,1fr)}
+  .pw-choose{grid-template-columns:1fr}
+}
+@media (max-width:620px){
+  .wrap{padding-inline:16px}
+  .masthead{font-size:10px;letter-spacing:.04em}
+  .edition .pack{display:none}
+  .hero h1{font-size:36px}
+  .lead{font-size:17.5px}
+  .ch-head{grid-template-columns:1fr;gap:5px}
+  .ch-num{border-top:0;padding-top:0;display:flex;align-items:baseline;gap:9px}
+  .ch-num b{font-size:21px}
+  .ch-title h2{font-size:26px}
+  .ch-body h3{font-size:19px}
+  .demo-body{padding:11px}
+  .demo-title .hint{display:none}
+  .code pre{font-size:11.2px}
+  .fig{width:calc(100vw - 32px)}
+  .ctl-btn{flex-wrap:wrap;max-width:100%}
+  .ctl-btn button{padding:7px 11px;font-size:12px;flex:0 1 auto}
+}
+@media (prefers-reduced-motion:reduce){
+  html{scroll-behavior:auto}
+  *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important}
+}
+@media print{body{background:#fff}.progress,.demo,.art,.links,.toc,.site-foot{display:none}}
+
+/* ══ D1 拨测状态机 pm-* ══ */
+.pm-wrap{display:grid;grid-template-columns:1fr 262px;gap:14px}
+.pm-stage{border:1.5px solid var(--line-strong);border-radius:3px;background:var(--card);padding:14px;box-shadow:var(--hard-sm)}
+.pm-state{display:inline-flex;align-items:baseline;gap:9px;font-family:var(--mono);font-weight:800;font-size:20px;border:2px solid;border-radius:3px;padding:6px 14px;box-shadow:var(--hard-sm)}
+.pm-state .zh{font-size:11px;font-weight:400;letter-spacing:.08em}
+.pm-state.up{color:var(--clock);border-color:var(--clock);background:rgba(63,143,95,.1)}
+.pm-state.down{color:var(--alarm);border-color:var(--alarm);background:rgba(181,72,42,.1)}
+.pm-lights{display:flex;gap:5px;margin:13px 0 4px}
+.pm-light{width:20px;height:8px;border-radius:2px;background:var(--line);border:1px solid var(--line-strong)}
+.pm-light.f{background:var(--alarm);border-color:var(--alarm)}
+.pm-light.s{background:var(--clock);border-color:var(--clock)}
+.pm-counter-lbl{font-family:var(--mono);font-size:9.5px;color:var(--muted);letter-spacing:.05em}
+.pm-log{font-family:var(--mono);font-size:9.8px;line-height:1.75;color:var(--muted);background:var(--card2);border:1px solid var(--line);border-radius:2px;padding:7px 9px;min-height:150px;max-height:220px;overflow-y:auto;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:11px}
+.pm-log .bad{color:var(--alarm)}
+.pm-log .good{color:var(--clock)}
+.pm-log .cool{color:var(--rail);font-weight:700}
+.pm-side{border:1px solid var(--line);border-radius:2px;background:var(--card2);padding:11px 12px;display:flex;flex-direction:column;gap:8px}
+.pm-side h5{margin:0;font-family:var(--mono);font-size:10px;letter-spacing:.07em;color:var(--faint);font-weight:700}
+.pm-btnrow{display:flex;gap:6px;flex-wrap:wrap}
+.pm-btnrow button{padding:6px 10px;font-size:11.5px}
+.pm-kv{display:grid;grid-template-columns:1fr auto;gap:2px 8px;font-family:var(--mono);font-size:10px;color:var(--muted);line-height:1.7}
+.pm-kv b{color:var(--ink);text-align:right}
+.pm-kv b.yes{color:var(--clock)}.pm-kv b.no{color:var(--alarm)}
+
+/* ══ D2 健康分秤 hs-* ══ */
+.hs-wrap{display:grid;grid-template-columns:250px 1fr;gap:14px}
+.hs-score{border:1.5px solid var(--line-strong);border-radius:3px;background:var(--card);padding:16px;text-align:center;box-shadow:var(--hard-sm)}
+.hs-big{font-family:var(--mono);font-size:56px;font-weight:800;letter-spacing:-.03em;line-height:1.05}
+.hs-big.ok{color:var(--clock)}.hs-big.warn{color:var(--amber)}.hs-big.crit{color:var(--alarm)}
+.hs-status{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--muted);margin-top:4px}
+.hs-add{display:flex;gap:5px;flex-wrap:wrap;margin-top:13px;justify-content:center}
+.hs-add button{padding:5px 9px;font-size:10.5px;font-family:var(--mono)}
+.hs-list{font-family:var(--mono);font-size:9.8px;line-height:1.8;color:var(--muted);margin-top:11px;max-height:150px;overflow-y:auto;text-align:left}
+.hs-list b{color:var(--alarm)}
+.hs-chart{border:1px solid var(--line-strong);border-radius:2px;background:var(--card);padding:10px 12px}
+.hs-svg{width:100%;height:170px;display:block}
+.hs-legend{display:flex;gap:14px;flex-wrap:wrap;font-family:var(--mono);font-size:10px;color:var(--faint);margin-top:8px}
+.hs-legend span::before{content:"";display:inline-block;width:14px;height:3px;margin-right:5px;vertical-align:3px}
+.hs-legend .a::before{background:var(--alarm)}
+.hs-legend .b::before{background:var(--rail)}
+.hs-note{margin-top:9px;font-size:12px;line-height:1.75;color:var(--ink-soft);border-left:2px solid var(--rail);padding-left:10px}
+.hs-note b{color:var(--rail)}
+.hs-switch{margin-top:10px}
+
+/* ══ D3 根因卡生成器 rc-* ══ */
+.rc-wrap{display:grid;grid-template-columns:236px 1fr;gap:14px}
+.rc-types{display:flex;flex-direction:column;gap:5px}
+.rc-type{border:1px solid var(--line);background:var(--card);border-radius:2px;padding:8px 10px;text-align:left;cursor:pointer}
+.rc-type b{font-size:12.5px;display:flex;justify-content:space-between;align-items:center}
+.rc-type b em{font-style:normal;font-family:var(--mono);font-size:9px;font-weight:700;border:1px solid;border-radius:2px;padding:1px 5px}
+.rc-type small{display:block;font-size:10.5px;color:var(--muted);line-height:1.6;margin-top:2px}
+.rc-type[aria-pressed=true]{border-color:var(--rail);background:rgba(51,62,72,.06)}
+.rc-card{border:1.5px solid var(--line-strong);border-radius:3px;background:var(--card);padding:13px 15px;box-shadow:var(--hard-sm)}
+.rc-chain{display:flex;flex-wrap:wrap;gap:4px;align-items:center;font-family:var(--mono);font-size:10px;color:var(--ink-soft);margin-bottom:10px}
+.rc-chain i{font-style:normal;color:var(--alarm)}
+.rc-chain span{border:1px solid var(--line);background:var(--card2);border-radius:2px;padding:2px 7px}
+.rc-root{font-size:13.5px;line-height:1.8;color:var(--ink)}
+.rc-root b{color:var(--rail)}
+.rc-steps{margin-top:10px;border:1px solid var(--line);border-radius:2px;background:var(--code-bg);padding:9px 11px;font-family:var(--mono);font-size:10px;line-height:1.8;color:#cfd6d3;white-space:pre-wrap;overflow-wrap:anywhere;max-height:190px;overflow-y:auto}
+.rc-steps .cmd{color:#9fc4ae}
+.rc-steps .dim{color:#7d8a85}
+.rc-ai{margin-top:10px;border-left:3px solid #77588a;background:rgba(119,88,138,.07);padding:8px 11px;font-size:12.5px;line-height:1.75;color:var(--ink-soft)}
+.rc-ai b{color:#77588a}
+.rc-ai.err{border-color:var(--alarm);background:rgba(217,111,31,.08)}
+.rc-ai.err b{color:var(--alarm)}
+.rc-foot{margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-family:var(--mono);font-size:10px;color:var(--faint)}
+.rc-foot .conf{border:1px solid var(--clock);color:var(--clock);border-radius:2px;padding:1px 7px;font-weight:700}
+.rc-foot .conf.mid{border-color:var(--amber);color:var(--amber)}
+.rc-foot .prop{border:1px dashed var(--rail);color:var(--rail);border-radius:2px;padding:1px 7px}
+
+/* ══ D4 命令安检门 gw-* ══ */
+.gw-wrap{display:grid;grid-template-columns:1fr 288px;gap:14px}
+.gw-in{display:flex;flex-direction:column;gap:9px}
+.gw-input{display:flex;gap:7px}
+.gw-input input{flex:1;font-family:var(--mono);font-size:12.5px}
+.gw-cases{display:flex;gap:5px;flex-wrap:wrap}
+.gw-cases button{padding:4px 9px;font-size:10.5px;font-family:var(--mono)}
+.gw-verdict{display:flex;align-items:center;gap:9px;font-family:var(--mono);font-weight:800;font-size:15px;border:2px solid;border-radius:3px;padding:7px 13px;width:fit-content;box-shadow:var(--hard-sm)}
+.gw-verdict.allow{color:var(--clock);border-color:var(--clock);background:rgba(63,143,95,.1)}
+.gw-verdict.deny{color:var(--alarm);border-color:var(--alarm);background:rgba(181,72,42,.1)}
+.gw-verdict small{font-size:10.5px;font-weight:400;letter-spacing:.06em}
+.gw-segs{margin-top:11px;display:flex;flex-direction:column;gap:6px}
+.gw-seg{display:grid;grid-template-columns:22px 1fr 92px;gap:9px;align-items:center;border:1px solid var(--line);border-radius:2px;background:var(--card);padding:7px 10px}
+.gw-seg .mk{font-family:var(--mono);font-weight:800;text-align:center;font-size:14px}
+.gw-seg.ok .mk{color:var(--clock)}
+.gw-seg.bad .mk{color:var(--alarm)}
+.gw-seg.bad{background:rgba(217,111,31,.07)}
+.gw-seg code{font-family:var(--mono);font-size:11.5px;color:var(--ink);overflow-wrap:anywhere}
+.gw-seg .risk{font-family:var(--mono);font-size:9.5px;text-align:right;white-space:nowrap}
+.gw-seg .risk em{font-style:normal;font-weight:700;border:1px solid;border-radius:2px;padding:1px 5px}
+.gw-seg .risk em.lo{color:var(--clock);border-color:var(--clock)}
+.gw-seg .risk em.mid{color:var(--amber);border-color:var(--amber)}
+.gw-seg .risk em.hi{color:var(--alarm);border-color:var(--alarm)}
+.gw-audit{font-family:var(--mono);font-size:9.8px;line-height:1.75;color:var(--muted);background:var(--card2);border:1px dashed var(--line-strong);border-radius:2px;padding:8px 10px;margin-top:11px;white-space:pre-wrap;overflow-wrap:anywhere}
+.gw-audit b{color:var(--alarm)}
+.gw-side{border:1px solid var(--line);border-radius:2px;background:var(--card2);padding:11px 12px}
+.gw-side h5{margin:0 0 8px;font-family:var(--mono);font-size:10px;letter-spacing:.07em;color:var(--faint);font-weight:700}
+.gw-rule{font-family:var(--mono);font-size:9.8px;line-height:1.7;border-bottom:1px dashed var(--line);padding-block:5px;color:var(--ink-soft)}
+.gw-rule b{color:var(--rail);display:block;font-size:10.5px}
+.gw-rule em{font-style:normal;color:var(--amber);font-weight:700}
+.gw-rule .hi{color:var(--alarm)}
+.gw-rule:last-child{border-bottom:0}
+@media (max-width:980px){
+  .pm-wrap,.hs-wrap,.rc-wrap,.gw-wrap{grid-template-columns:1fr}
+}
+@media (max-width:620px){
+  .gw-seg{grid-template-columns:22px 1fr}
+  .gw-seg .risk{grid-column:2;text-align:left;white-space:normal}
+  .rc-foot{flex-direction:column;align-items:flex-start}
+}
+
+
+/* ---- VOL.14 小样专属 ---- */
+.term{background:var(--code-bg);border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+.term-bar{display:flex;align-items:center;gap:6px;padding:7px 12px;background:rgba(255,255,255,.06);border-bottom:1px solid rgba(255,255,255,.08)}
+.term-bar i{width:9px;height:9px;border-radius:50%;background:var(--line-strong);display:inline-block}
+.term-bar i:first-child{background:#c75b5b}.term-bar i:nth-child(2){background:#c9a55b}.term-bar i:nth-child(3){background:#6fa876}
+.term-bar span{margin-left:8px;font-family:var(--mono);font-size:11px;color:#9fb0a8;letter-spacing:.08em}
+.term pre{margin:0;padding:12px 14px;font-family:var(--mono);font-size:12.5px;line-height:1.75;color:var(--code-ink);white-space:pre-wrap;min-height:96px}
+.readout{display:flex;flex-wrap:wrap;gap:8px 18px;margin:12px 0;font-size:12.5px;color:var(--muted)}
+.readout b{color:var(--ink);font-weight:600}
+.readout b.bad{color:var(--signal)}
+.d1-srcs{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.d1-src{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;transition:.25s}
+.d1-src b{display:block;font-size:12px;color:var(--ink)}
+.d1-src i{display:block;font-family:var(--mono);font-size:10.5px;color:var(--muted);font-style:normal;margin:2px 0}
+.d1-src em{font-style:normal;font-family:var(--mono);font-size:17px;font-weight:700;color:var(--signal)}
+.d1-src.hot{border-color:var(--signal);background:var(--signal-soft);box-shadow:var(--hard-sm)}
+.d1-stage{display:flex;gap:10px;margin:12px 0;flex-wrap:wrap}
+.d1-box{flex:1;min-width:130px;border:1px dashed var(--line-strong);border-radius:8px;padding:10px;font-size:12px;color:var(--ink-soft);text-align:center}
+.d1-box.ghostbox{border-style:solid;color:var(--ink)}
+.d2-wrap{display:flex;gap:14px;flex-wrap:wrap;margin-bottom:12px}
+.d2-cap{font-family:var(--mono);font-size:10.5px;color:var(--muted);letter-spacing:.08em;margin-bottom:6px}
+.d2-ledger,.d2-issuer{flex:1;min-width:200px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+.d2-tab{width:100%;min-width:0;border-collapse:collapse;font-family:var(--mono);font-size:12px}
+.d2-tab td,.d2-tab th{border:1px solid var(--line);padding:4px 8px;text-align:left}
+td.bad,.bad{color:var(--signal)}
+.d2-num{font-family:var(--mono);font-size:34px;font-weight:700;color:var(--ink);transition:.3s}
+.d2-num.swap{color:var(--signal)}
+.d2-who{font-size:12px;color:var(--ink-soft);margin-top:4px}
+.d3-resp{background:var(--card);border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:12px}
+.d3-head{display:flex;justify-content:space-between;align-items:center;padding:9px 14px;background:var(--paper-deep);border-bottom:1px solid var(--line);font-family:var(--mono);font-size:12px}
+.d3-code{font-weight:700;color:var(--clock)}
+.d3-ct{color:var(--muted);font-size:11px}
+.d3-body{margin:0;padding:14px;font-family:var(--serif);font-size:14.5px;line-height:1.8;color:var(--ink)}
+.d3-switches{display:flex;gap:18px;flex-wrap:wrap;margin-bottom:6px}
+.d4-wrap{display:flex;gap:16px;margin-bottom:6px;flex-wrap:wrap}
+.d4-counters{min-width:150px;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:12px 14px;text-align:center}
+.d4-big{font-family:var(--mono);font-size:44px;font-weight:700;line-height:1;color:var(--signal)}
+.d4-cap{font-size:11px;color:var(--muted);margin-top:4px}
+.d4-sub{font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);margin-top:4px}
+.d4-tl{display:flex;flex-wrap:wrap;gap:3px;min-height:60px;align-content:flex-start}
+.d4-tl i{width:9px;height:16px;background:var(--line-soft);border-radius:2px}
+.d4-tl i.on{background:var(--signal)}
+.d5-stack{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.d5-layer{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--card);display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
+.d5-layer.base{border-left:4px solid var(--clock)}
+.d5-layer b{font-size:13px;color:var(--ink);min-width:150px}
+.d5-layer span{font-family:var(--mono);font-size:11px;color:var(--ink-soft)}
+.d5-layer i{margin-left:auto;font-family:var(--mono);font-style:normal;font-size:10.5px;color:var(--faint)}
+.d5-layer.residue{box-shadow:inset 0 0 0 1px rgba(181,72,42,.4);background:var(--signal-soft)}
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tbl-wrap table{min-width:560px}
+@media (max-width:520px){.d2-wrap{flex-direction:column}}
+
+</style>
+</head>
+<body>
+
+<header class="wrap masthead">
+  <div class="brand">
+    <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="18" rx="1.5" stroke="#333e48" stroke-width="1.4"/><path d="M4 8h16M4 13h16M4 18h16" stroke="#333e48" stroke-width="1.1"/><circle cx="8" cy="5.5" r="1" fill="#3f8f5f"/><circle cx="8" cy="10.5" r="1" fill="#b5482a"/><circle cx="8" cy="15.5" r="1" fill="#3f8f5f"/></svg></span>
+    <span>造物手记 <small>VOL.14</small></span>
+  </div>
+  <div class="edition">
+    <span class="pack"><i class="pack-dot" aria-hidden="true"></i>INCIDENT LEDGER / 事故台账</span>
+    <span>BOARD 14 · 2026.11</span>
+  </div>
+</header>
+
+<section class="wrap hero">
+  <div>
+    <p class="eyebrow"><span>FIELD NOTES</span>一次事故台账式的复盘</p>
+    <h1>借来的<br/><em>状态机</em><span class="sub">把 OpenClaw 接进 Easel 的三天——双网关分裂、僵尸启动记录、PID 复用、渠道白名单、无限重试烧额度：五起事故逐笔清算，报文与时间戳原样取自本机日志；五枚互动小样全部确定性，可重放</span></h1>
+    <div class="dek-wrap">
+      <p class="dek-tag">本篇提要</p>
+      <p class="dek">接别人的能力，从来不是把一个包拖进依赖表：你同时接回来了它的配置源、它的锁、它的启动台账、它的重试脾气。这三天里，Easel 与 OpenClaw 的缝合处接连崩开——healthz 绿着、聊天 0.2 秒秒败；一行 completed_at=NULL 的台账锁死整台网关；操作系统把 6240 这个号发给了无关的 Windows 服务；渠道把拒绝文案穿着 200 的外衣送回来；执行器对着空回复每四秒一发地烧了 31 次。每一起都有日志为证，每一笔都记在这本台账里。</p>
+    </div>
+    <div class="hero-meta">
+      <span class="pill"><b>3</b> 天排障实录</span>
+      <span class="pill"><b>5</b> 起事故 · 逐笔清算</span>
+      <span class="pill"><b>31</b> 发空回复 / 206 秒</span>
+      <span class="pill"><b>0</b> 个伪造时间戳</span>
+    </div>
+  </div>
+  <figure class="art">
+    <div class="screen">
+      <div class="screen-img">
+        <img src="assets/art/hero.webp" alt="单眼折纸鸟工程师一手举扳手一手捧台账，面前一台由收音机壳、钟表齿轮、生锈阀门拼装的机器，每个零件挂着写满符号的标签吊牌" width="1152" height="832"/>
+      </div>
+      <div class="tc-bar"><span>BOARD 14</span><span class="tc">CONFIG · LOCK · PID · 200 · RETRY</span></div>
+    </div>
+    <figcaption><span><b>FIG. 00</b> 一台机器，每个零件都拖着别人的状态</span><span>INK &amp; GOUACHE / 2026</span></figcaption>
+  </figure>
+  <div>
+    <p class="dek" style="margin-top:26px">事故的收尾都算体面：端口统一到 18789，僵尸行逐条摘除，31 发循环当场斩断，工作台回到 117 个技能全绿。但「修好了」三个字值不了五起事故——值钱的是它们共同指向的一句话：<em>每接一层别人的能力，就背一层别人的状态机</em>。能力是文档里写着的部分，状态机是 schema 和锁文件里藏着的部分；文档读起来只要十分钟，状态机要用事故认识。本篇把五台状态机逐台拆开：它藏在哪里、什么时候漏出、怎么止损、下次接之前该问什么。</p>
+    <p class="scope">标本 · easel（本机自研工作台，main @121dd211 · v0.50.3，2026-11-12～14 排障现场）<br/>本文引文核对到真实文件：scripts/gateway.ps1 / easel/runtime_worker.py / easel/runtime_host.py / data/openclaw/openclaw.json / data/logs/failure-events.jsonl / data/logs/raw-stream.jsonl / data/.execution-service/service.log<br/>netstat 双 LISTENING 与 gateway.error.log 的 09:26 块因日志被后续重启覆盖，以排障现场转录为准并已标注。五枚小样全部确定性：时间线、间隔序列、报文均照抄实录，参数摊在明面上。</p>
+    <div class="toc-head"><span>CONTENTS · 六段台账</span><span>SPLIT → STALE → PID → 200 → RETRY → DEBTS</span></div>
+    <nav class="toc">
+      <a href="#ch1"><i>01</i><span>双网关分裂<small>三个配置源说三种端口，一台半死的网关是缝合线崩开的第一声</small></span></a>
+      <a href="#ch2"><i>02</i><span>僵尸启动记录<small>completed_at=NULL 的一行台账，锁死了此后每一次启动</small></span></a>
+      <a href="#ch3"><i>03</i><span>PID 复用<small>操作系统把 6240 发给了一个 WMI 服务——判活判错了对象</small></span></a>
+      <a href="#ch4"><i>04</i><span>200 谎报<small>拒绝文案穿着 200 的外衣过关，测活只看状态码就会放行</small></span></a>
+      <a href="#ch5"><i>05</i><span>无限重试烧额度<small>31 发空回复、206 秒：一把重试钥匙开了三把不同的锁</small></span></a>
+      <a href="#ch6"><i>06</i><span>状态机清算<small>接一层背一层的总账，与接入之前的三个问题</small></span></a>
+    </nav>
+  </div>
+</section>
+
+<section class="wrap stats" aria-label="关键数字">
+  <div class="wrap stats-inner">
+    <div class="stat"><b>3<span>天</span></b><small>2026-11-12～14 排障实录，全部时间戳照抄日志</small></div>
+    <div class="stat"><b>5<span>起事故</span></b><small>双网关分裂 / 僵尸台账 / PID 复用 / 200 谎报 / 无限重试</small></div>
+    <div class="stat"><b>31<span>发</span></b><small>206 秒空回复循环，间隔 2.8–21.3 秒，raw-stream.jsonl 在盘可查</small></div>
+    <div class="stat"><b>1<span>行 NULL</span></b><small>gateway_boot_lifecycle 里一条没盖章的记录，锁死了整台网关</small></div>
+  </div>
+</section>
+
+<main>
+
+<section class="chapter" id="ch1">
+  <div class="ch-head">
+    <div class="ch-num"><b>01</b>CHAPTER<br/>00:00</div>
+    <div class="ch-title">
+      <h2>双网关分裂：三个配置源，三种说法</h2>
+      <p>.env 说 18789，openclaw.json 说 37289，runtime-launch.json 也说 37289——三个说法都能自圆其说，唯一不一致的是事实</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">2026 年 11 月 12 日 23:16:55，我第一次手动拉起 OpenClaw 网关。三个小时后，启动器按它自己的配置又拉起了第二台。谁也没出任何差错——两台网关各自忠实执行了自己读到的配置。</p>
+    <div class="pull">网关启动命令（scripts/gateway.ps1，原文）：<br/><code>openclaw --profile easel gateway run --allow-unconfigured --bind loopback --port $Port</code><br/>$Port 从环境变量与配置里解析出来——问题恰恰藏在「从哪里解析」。</div>
+    <p>把三份配置摊在桌面上，各自的理由都成立：</p>
+    <div class="tbl-wrap"><table class="tbl">
+      <tr><th>配置源</th><th>键</th><th>值</th><th>谁读它</th></tr>
+      <tr><td>.env（安装期写入）</td><td>OPENCLAW_PORT</td><td><b>18789</b></td><td>gateway.ps1 手动启动路径</td></tr>
+      <tr><td>data/openclaw/openclaw.json</td><td>gateway.port</td><td><b>37289</b></td><td>OpenClaw 自己的持久配置、CLI 传输探活</td></tr>
+      <tr><td>data/runtime-launch.json</td><td>gatewayPort</td><td><b>37289</b></td><td>启动器 start_workspace.py 导出为环境变量</td></tr>
+    </table></div>
+    <p>结果就是 netstat 里的两行：</p>
+    <div class="code"><div class="code-bar">netstat -ano | grep LISTENING · 2026-11-12 深夜 · 现场转录</div><pre>TCP    127.0.0.1:18789    0.0.0.0:0    LISTENING    6240   ← 全局 openclaw，手动启动
+TCP    127.0.0.1:37289    0.0.0.0:0    LISTENING    1112   ← .tools 本地 openclaw，启动器拉起</pre></div>
+    <div class="fig"><div class="frame"><img src="assets/art/ch1.webp" alt="单眼折纸鸟站在两台款式不同的电话总机之间，几十根电线缠成一个大结，鸟一手各握一个插头" width="1152" height="832" loading="lazy" style="width:100%;border:1px solid var(--line)"/></div><figcaption><span><b>FIG. h</b> 两台总机，两种说法：分裂不是谁犯错，是没人指认权威</span><span>INK &amp; GOUACHE / 2026</span></figcaption></div>
+    <p>两台网关共用同一个 profile、同一份会话库，却监听两个端口、写两套状态。执行器（runtime）按环境变量探 37289，探到的另一台按 18789 健在——于是日志里出现了这条在盘上至今可查的警告（data/.execution-service/service.log）：</p>
+    <div class="code"><div class="code-bar">service.log · 原样，盘上可查</div><pre>[chat-transport] HTTP 直连探不通 http://127.0.0.1:37289/v1/chat/completions
+（端口来自 $OPENCLAW_GATEWAY_PORT），已退回 CLI 传输（每轮多付一次客户端冷启动）。
+查：D:\project\Easel/scripts/gateway.sh status</pre></div>
+    <p>「每轮多付一次客户端冷启动」——这不是崩溃，是降级：聊天还能通，只是每条消息都多背一次冷启动的税。而配置继续分裂下去，降级迟早变成失联。</p>
+    <div class="demo" id="d1">
+      <div class="demo-head"><span class="demo-tag">DEMO 01 · 三个端口三种话</span><span class="demo-title">端口分裂推演<span class="hint">按「下一步」重放那晚的时间线</span></span></div>
+      <div class="demo-body">
+        <div class="d1-srcs">
+          <div class="d1-src" id="d1-env"><b>.env</b><i>OPENCLAW_PORT</i><em id="d1-envv">18789</em></div>
+          <div class="d1-src" id="d1-oc"><b>openclaw.json</b><i>gateway.port</i><em id="d1-ocv">37289</em></div>
+          <div class="d1-src" id="d1-rl"><b>runtime-launch.json</b><i>gatewayPort</i><em id="d1-rlv">37289</em></div>
+        </div>
+        <div class="d1-stage"><div class="d1-box" id="d1-ga">网关 A<div></div></div><div class="d1-box" id="d1-gb">网关 B<div></div></div><div class="d1-box ghostbox" id="d1-req">你的消息<div id="d1-go"></div></div></div>
+        <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>timeline</span></div><pre id="d1-log">等待重放……</pre></div>
+        <div class="readout"><span>网关 A：<b id="d1-ra">未启动</b></span><span>网关 B：<b id="d1-rb">未启动</b></span><span>消息去向：<b id="d1-rr">——</b></span></div>
+        <div><button class="ghost" id="d1-next">下一步</button> <button class="ghost" id="d1-reset">重置</button></div>
+      </div>
+      <div class="demo-foot">确定性推演：五步序列按 11-12 深夜真实顺序编排，端口值与警告报文照抄日志；「消息去向」每步一算，无随机。值得看的是第 4 步——两台网关都活着，你的消息仍然两头落空。重置后可重放。</div>
+    </div>
+    <p><b>为什么三个地方都要有端口？</b>逐层看，每一份都清白：.env 是安装脚本 setup.ps1 写下的期初契约；openclaw.json 是网关进程自己的持久配置；runtime-launch.json 是工作台「保存的启动设置」。单独看，各自都是单一来源的合格公民。问题在于端口是一条<em>跨层契约</em>——三个层各自持有一份副本，却没有一个唯一的权威。三个说法中两个一致、一个少数派时，错误还能被「多数」压住；当少数派恰好是启动顺序在前的那个，赢的是启动顺序，不是事实。修复只做了两件事：把 openclaw.json 与 runtime-launch.json 统一到 18789，然后立一条规矩——<b>端口和版本号一样，必须有单一来源</b>。这不是新发明，是把项目里「pyproject.toml 是唯一版本来源」的既有纪律，补到了端口头上。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch2">
+  <div class="ch-head">
+    <div class="ch-num"><b>02</b>CHAPTER<br/>00:01</div>
+    <div class="ch-title">
+      <h2>僵尸启动记录：一行 NULL，锁死一台网关</h2>
+      <p>healthz 绿着、聊天 0.2 秒秒败——半死状态藏在一行没人收尾的台账里</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">11 月 14 日 09:26，网关第三次重启。启动日志停在 <code>starting...</code>，此后十八分钟再无一行输出。而 healthz 依旧回答 <code>{"ok":true,"status":"live"}</code>——仪表全绿，聊天 0.2 秒内失败。</p>
+    <p>那天上午用户连发三条消息，三条都在一两百毫秒内被拒绝。失败台账（data/logs/failure-events.jsonl）里三笔并排躺着：</p>
+    <div class="tbl-wrap"><table class="tbl">
+      <tr><th>事件 ID</th><th>本地时间</th><th>耗时</th><th>指定的模型</th></tr>
+      <tr><td>3ff3a413…</td><td>11-12 23:54:51</td><td><b>194 ms</b></td><td>（未指定）</td></tr>
+      <tr><td>091d3c23…</td><td>11-14 09:23:21</td><td><b>123 ms</b></td><td>anthropic/deepseek-v4.1-flash-1017</td></tr>
+      <tr><td>94bde120…</td><td>11-14 09:43:58</td><td><b>272 ms</b></td><td>relay/deepseek-v4-pro-0813</td></tr>
+    </table></div>
+    <p>时间线一律是「请求已收到，等待运行器确认」，然后执行失败。运行器根本没醒。翻开 gateway.error.log（以下为现场转录，该文件后被重启覆盖），答案躺在里面：</p>
+    <div class="code"><div class="code-bar">gateway.error.log · 2026-11-14 09:26 · 现场转录（文件后被覆盖）</div><pre>09:26:12 Gateway failed to start: gateway already running (pid 6240); lock timeout after 5000ms
+         If the gateway is supervised, stop it with: openclaw --profile easel gateway stop
+09:26:14 Port 18789 is already in use.
+09:26:14 - pid 32568: D:\node\node.EXE ...\.tools\npm\node_modules\openclaw\openclaw.mjs
+         --profile easel gateway run --allow-unconfigured --bind loopback --port 18789</pre></div>
+    <p>「pid 6240 已经在跑」——可是 18789 上此刻listening的是 32568 自己。翻数据库，锁的来路找到了。OpenClaw 在状态库里有一张启动台账表 <code>gateway_boot_lifecycle</code>，里面一行原样记录：</p>
+    <div class="code"><div class="code-bar">~/.openclaw-easel/state/openclaw.sqlite · gateway_boot_lifecycle · 现场查询实录</div><pre>boot_id: 1e7403f9-6af5-4b28-a24c-1e40dfaa377f
+pid:     6240
+started_at_ms:  1794496615287        ← 2026-11-12 23:16:55（第一次手动启动那一刻）
+completed_at_ms: NULL                ← 永远等不到收尾的一行</pre></div>
+    <div class="fig"><div class="frame"><img src="assets/art/ch2.webp" alt="单眼折纸鸟在昏暗档案室举着台灯，抽出一份没有盖章的牛皮纸卷宗，旁边卷宗盖着红章" width="1152" height="832" loading="lazy" style="width:100%;border:1px solid var(--line)"/></div><figcaption><span><b>FIG. h</b> 档案室里那行没盖章的记录：盖章的人再也没回来</span><span>INK &amp; GOUACHE / 2026</span></figcaption></div>
+    <p>台账的设计本身是干净的：启动时先记一笔，正常退出时在 <code>finally</code> 里把账做平（easel 同类机制见 runtime_worker.py 末尾——干净退出连状态文件都会顺手清掉）。<b>脏的不是设计，是死法</b>：昨晚那台网关是被强杀的，<code>finally</code> 没来得及跑，这行 NULL 就永远留在了表里。</p>
+    <p><b>一行台账，凭什么锁死整台网关？</b>把启动例程的检查顺序展开就明白了：新实例启动 → 查台账有没有未完成的 boot 记录 → 有 → 台账里记着 pid 6240 → 问操作系统「6240 还活着吗」→ 答「活着」→ 结论「已有网关在运行」→ 等锁 5 秒 → 放弃启动。每一环单独看都严谨，连起来就是一座精确通向故障的桥。而 agent 数据库的陈旧租约（<code>agent_database_leases</code> 里同样挂着一条 owner_pid=6240）还在旁边帮腔。</p>
+    <div class="note">healthz 量的是「HTTP 服务器活着」，agent 执行器要的是「启动序列走完」。半死状态就活在这两者之间的空档里：探活全绿、能力全无。<b>假活比死更贵</b>——死了你立刻重启，假活让你对着绿灯排查半小时。</div>
+    <p>手术记录很短：两个状态库里 <code>completed_at IS NULL</code> 的 boot 行共三条（6240 / 37116 / 32568，每条都是一次硬杀的遗产），连同一条陈旧租约一并摘除；下一台网关 09:54 启动，日志一路走到 <code>ready</code>，117 个技能回到工作台。但台账这课还没完——「pid 6240 活着」这个判据本身，才是第三起事故的伏笔。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch3">
+  <div class="ch-head">
+    <div class="ch-num"><b>03</b>CHAPTER<br/>00:02</div>
+    <div class="ch-title">
+      <h2>PID 复用：操作系统把 6240 发给了别人</h2>
+      <p>「pid 还活着」只证明有个进程活着，不证明还是那个进程</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">锁没有错，台账没有错，错的是那个最顺手的判活办法：问操作系统「pid 6240 还在吗」。</p>
+    <p>第二天早上问了一次，答「在」：</p>
+    <div class="code"><div class="code-bar">Get-CimInstance Win32_Process -Filter 'ProcessId=6240' · 2026-11-14 现场</div><pre>ProcessId    : 6240
+Name         : WMIRegistrationService.exe
+CreationDate : 2026-11-14 8:15:43</pre></div>
+    <div class="fig"><div class="frame"><img src="assets/art/ch3.webp" alt="发号窗口里折纸鸟工作人员把方形号牌递给窗外一只拟人化公文包，旁边长椅上一台落灰的旧机器" width="1152" height="832" loading="lazy" style="width:100%;border:1px solid var(--line)"/></div><figcaption><span><b>FIG. h</b> 发号窗不问来历：6240 今天归公文包了</span><span>INK &amp; GOUACHE / 2026</span></figcaption></div>
+    <p>昨晚的网关进程早死了，但 pid 6240 这个整数没有被注销——操作系统的 pid 是个小整数池，用完回收、再发新人。今晨 8:15，同一个 6240 发给了一个完全无关的 Windows 服务。于是昨夜的僵尸台账醒来一查：「6240？活着。」——它没有说谎，它只是不知道自己问错了人。还有一层讽刺：前一天晚上 taskkill 它时返回「拒绝访问」，那其实是一个正在死亡的进程的竞态回声，被当成了顽抗。</p>
+    <p><b>pid 判活错在哪？</b>错在把「存在」当成了「同一」。存在性证明只需要一个整数；同一性证明需要两个——pid 之外还要配一个进程启动时间，两者成对相等才算数。有意思的是，同一份代码库里正确的示范就躺在旁边：<code>agent_database_leases</code> 的列定义是 <code>lease_id, agent_id, path, owner_pid, <b>owner_start_time</b>, opened_at</code>——租约判活用的是 pid 与启动时间成对比较。同一个仓库，两种传统并存：一种被写进了文档，另一种只在事故里露面。</p>
+    <div class="demo" id="d2">
+      <div class="demo-head"><span class="demo-tag">DEMO 02 · 台账、发号窗与那行 NULL</span><span class="demo-title">从死亡到撞锁的完整序列<span class="hint">四幕推演，看 6240 如何易主</span></span></div>
+      <div class="demo-body">
+        <div class="d2-wrap">
+          <div class="d2-ledger">
+            <div class="d2-cap">gateway_boot_lifecycle</div>
+            <table class="d2-tab"><tr><th>boot_id</th><th>pid</th><th>completed_at</th></tr>
+              <tr id="d2-row"><td>1e7403f9…</td><td id="d2-pid">6240</td><td id="d2-done">NULL</td></tr>
+            </table>
+          </div>
+          <div class="d2-issuer">
+            <div class="d2-cap">OS 发号窗</div>
+            <div class="d2-num" id="d2-num">6240</div>
+            <div class="d2-who" id="d2-who">当前持有人：？（待查）</div>
+          </div>
+        </div>
+        <div class="term"><div class="term-bar"><i></i><i></i><i></i><span>sequence</span></div><pre id="d2-log">等待重放……点「重放四幕」开始。</pre></div>
+        <div class="readout"><span>启动结论：<b id="d2-verdict">——</b></span><span>僵尸行：<b id="d2-zombie">存在</b></span></div>
+        <div><button class="ghost" id="d2-play">重放四幕</button> <button class="ghost" id="d2-surg">外科手术：摘除僵尸行</button> <button class="ghost" id="d2-reset">重置</button></div>
+      </div>
+      <div class="demo-foot">确定性推演：boot_id、pid、时间戳、报文均照抄现场实录；幕间节奏固定。「发号窗」是把操作系统的 pid 分配画成了窗口——WMI 服务 08:15:43 领走 6240 是 Get-CimInstance 的真实输出。值得看第三幕：三步检查步步严谨，结局早已写死。重置后可重放。</div>
+    </div>
+    <p>这一课的修复分两层：当下，摘除僵尸行与租约（外科手术，幂等、可重放）；长期，给这类台账判活补上成对校验——<b>pid 与启动时间必须同时相等，才算同一进程</b>。这条建议同样适用于任何用「号牌」判活的地方：号牌会易主，启动时间才是那个人统一的指纹。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch4">
+  <div class="ch-head">
+    <div class="ch-num"><b>04</b>CHAPTER<br/>00:03</div>
+    <div class="ch-title">
+      <h2>200 谎报：拒绝文案穿着 200 的外衣</h2>
+      <p>传输层说「送达」，业务层说「不办」——你测的是哪一层？</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">平台修稳之后，最后剩下的心病是渠道。11 月 14 日上午，隔着网关发了一发真实请求——HTTP 200，六秒流式返回，一切指标健康。内容是这一行：</p>
+    <div class="pull">「本站仅限主流 Coding 客户端/CLI 使用，支持：Codex、Claude Code、OpenCode、Magpie、DeepSeek Harness、ZCode、Pi、Oh My Pi。当前客户端不支持。」<br/>—— api.kunyou.asia 经网关返回的 assistant 正文，HTTP 200 · elapsedMs≈6271 · text/event-stream</div>
+    <div class="fig"><div class="frame"><img src="assets/art/ch4.webp" alt="传送带上的包裹穿过亮着绿灯的闸机，包裹里露出一封带红色墨线的拒绝信，折纸鸟安检员用放大镜查看" width="1152" height="832" loading="lazy" style="width:100%;border:1px solid var(--line)"/></div><figcaption><span><b>FIG. h</b> 绿灯放行的包裹里，装着一封拒绝信</span><span>INK &amp; GOUACHE / 2026</span></figcaption></div>
+    <p>这不是故障，是对方的<em>准入策略</em>：Coding 套餐镜像站按客户端身份放行，名单上的每一个都是 CLI 形态的代理——Easel 网关这种普通 API 调用方天然不在册。麻烦在于它选的表达方式：<b>拒绝信息作为正常对话内容、穿着 HTTP 200 的外衣送达</b>。同一组渠道里的另一位（qui.cc.cd）倒是直接给了 403：<code>This group does not allow /v1/messages dispatch</code>，换 OpenAI 格式再试，是 <code>internal error</code>——两种风格，前者体面地撒谎，后者诚实地报错。</p>
+    <p>而设置页上渠道显示「已连通 · 通过」。测活逻辑只核对了状态码。</p>
+    <p><b>测活只看状态码为什么不够？</b>因为状态码是传输层的事实，不是业务层的事实。200 只承诺「包裹送达」，不承诺「包裹里是什么」。对一个聊天渠道，业务层的成功定义应当是「返回了有效的 assistant 内容」——拿到一段「我不服务你」的散文，等价于失败。测活闸少装一道滤网，假信号就会一路绿灯地流向用户：界面上永远「已连通」，聊天里永远答非所问。</p>
+    <div class="demo" id="d3">
+      <div class="demo-head"><span class="demo-tag">DEMO 03 · 200 测活闸</span><span class="demo-title">两道闸，一次过关<span class="hint">开关切到「读内容」，看绿灯变红灯</span></span></div>
+      <div class="demo-body">
+        <div class="d3-resp">
+          <div class="d3-head"><span class="d3-code" id="d3-code">HTTP 200 OK</span><span class="d3-ct">text/event-stream · 6271 ms</span></div>
+          <pre class="d3-body" id="d3-body">本站仅限主流 Coding 客户端/CLI 使用，支持：Codex、Claude Code、OpenCode、Magpie、DeepSeek Harness、ZCode、Pi、Oh My Pi。当前客户端不支持。</pre>
+        </div>
+        <div class="d3-switches">
+          <label class="switch"><input type="checkbox" id="d3-gateA" checked disabled/><span>闸 A · 只看状态码（现状）</span></label>
+          <label class="switch"><input type="checkbox" id="d3-gateB"/><span>闸 B · 内容感知（读正文关键词）</span></label>
+        </div>
+        <div class="readout"><span>测活结论：<b id="d3-verdict">——</b></span><span>界面显示：<b id="d3-ui">——</b></span><span>下游后果：<b id="d3-after">——</b></span></div>
+        <div><button class="ghost" id="d3-test">测一次</button> <button class="ghost" id="d3-reset">重置</button></div>
+      </div>
+      <div class="demo-foot">确定性演示：响应体照抄 11-14 实测原文，无随机。闸 A 是 2026-11-14 当天的真实测活逻辑（只看 200）；闸 B 是它缺的那道滤网——关键词只是示意，生产实现应判「是否有有效 assistant 内容」。值得看的不是结论翻转，而是翻转前后用户界面一字未变。</div>
+    </div>
+    <p>修复的方向因此非常便宜：<b>测活读一次正文</b>。不需要理解语义，只需要拒绝「明确说明自己不服务的回复」。真正贵的是那之前的三天——绿灯放行了多少次「已连通」，聊天里就沉默了多少次。</p>
+  </div>
+</section>
+
+<section class="chapter" id="ch5">
+  <div class="ch-head">
+    <div class="ch-num"><b>05</b>CHAPTER<br/>00:04</div>
+    <div class="ch-title">
+      <h2>无限重试烧额度：31 发空回复，206 秒</h2>
+      <p>一把重试钥匙，开了三种不同的锁，其中一把是你的钱包</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">200 谎报自己不会烧钱，它只是把柴火码好；点火的是执行器的重试策略。11 月 14 日 09:21:41，一次用户消息触发的运行，在 206 秒里对渠道发起了 31 次完整请求。</p>
+    <p>证据整整齐齐躺在 data/logs/raw-stream.jsonl 里——每一次模型回复结束都会落一行事件，而那 31 行的正文字段全是空的：</p>
+    <div class="code"><div class="code-bar">data/logs/raw-stream.jsonl · run 64362a35… · 节选（盘上可查）</div><pre>{"ts":…, "event":"assistant_message_end", "runId":"chatcmpl_64362a35…", "rawText":"", "rawThinking":""}
+{"ts":…, "event":"assistant_message_end", "runId":"chatcmpl_64362a35…", "rawText":"", "rawThinking":""}
+……共 31 行，rawText 全为空串</pre></div>
+    <div class="tbl-wrap"><table class="tbl">
+      <tr><th>日期</th><th>发数</th><th>时长</th><th>间隔范围</th></tr>
+      <tr><td>2026-10-20 20:22</td><td>5 发</td><td>102 秒</td><td>22–31 秒</td></tr>
+      <tr><td>2026-11-12 23:27</td><td>5 发</td><td>108 秒</td><td>7–34 秒</td></tr>
+      <tr><td>2026-11-12 23:34</td><td>6 发</td><td>106 秒</td><td>9–39 秒</td></tr>
+      <tr><td><b>2026-11-14 09:21</b></td><td><b>31 发</b></td><td><b>206 秒</b></td><td><b>2.8–21.3 秒</b></td></tr>
+    </table></div>
+    <div class="fig"><div class="frame"><img src="assets/art/ch5.webp" alt="折纸鸟面无表情地把硬币一枚枚投进售货机，出货口掉出空纸盒，地上硬币堆成插着小旗的山" width="1152" height="832" loading="lazy" style="width:100%;border:1px solid var(--line)"/></div><figcaption><span><b>FIG. h</b> 空盒子堆成了山，投币的手没有停</span><span>INK &amp; GOUACHE / 2026</span></figcaption></div>
+    <p>机制链一节一节捋直：渠道把拒绝文案塞进 200 流 → 流解析正常结束、assistant 正文为空 → 执行器把「空回复」归入「本轮未完成」→ 重试 → 渠道再次 200+拒绝 → ……每一环都各司其职，合起来是一台准确的烧钱机器。当时的止损手段只有一个——重启网关，杀掉那个运行。事后对账，官方 2026.11.3 的更新日志里恰好躺着一行对症的修复：「Recognize exhausted usage-limit errors without spending the transient rate-limit retry budget」——<b>识别限额类错误，不消耗重试预算</b>。方向给得很直白：重试不该是不看内容的自动贩卖机。</p>
+    <p><b>重试空回复为什么是错的？</b>因为「空回复」是三个不同疾病的同一个症状：网络抖动（重试有效）、上游限流（重试必须按对方的节奏）、业务拒绝（重试只会重复烧钱）。一把钥匙开三把锁的代价，是其中一把锁后面站着你的钱包。正确的重试必须先做分诊——哪怕只分「有内容/无内容」这一刀，31 发也能变成 1 发。</p>
+    <div class="demo" id="d4">
+      <div class="demo-head"><span class="demo-tag">DEMO 04 · 31 发重放台</span><span class="demo-title">空回复循环重放<span class="hint">实录间隔序列，加速 20 倍回放</span></span></div>
+      <div class="demo-body">
+        <div class="d4-wrap">
+          <div class="d4-counters">
+            <div class="d4-big" id="d4-n">0</div>
+            <div class="d4-cap">已发请求</div>
+            <div class="d4-sub">elapsed <b id="d4-t">0.0</b>s（实录刻度）</div>
+            <div class="d4-sub">本发间隔 <b id="d4-gap">—</b>s</div>
+          </div>
+          <div>
+            <div class="d4-tl" id="d4-tl"></div>
+            <label class="switch" style="margin-top:8px"><input type="checkbox" id="d4-bounded"/><span>对照：有界重试（3 次封顶）</span></label>
+          </div>
+        </div>
+        <div class="readout"><span>模式：<b id="d4-mode">无限重试（实录）</b></span><span>空回复：<b id="d4-empty">0</b></span><span>结果：<b id="d4-end">等待开始</b></span></div>
+        <div><button class="ghost" id="d4-play">重放</button> <button class="ghost" id="d4-stop">停止</button> <button class="ghost" id="d4-reset">重置</button></div>
+      </div>
+      <div class="demo-foot">确定性重放：31 发、30 个间隔全部照抄 raw-stream.jsonl 实录（加速 20 倍播放）；「有界」对照在第 3 发后终止——即「分诊一刀」能省下的部分。刻意不模拟金额：次数是事实，单价是猜测。</div>
+    </div>
+  </div>
+</section>
+
+<section class="chapter" id="ch6">
+  <div class="ch-head">
+    <div class="ch-num"><b>06</b>CHAPTER<br/>00:05</div>
+    <div class="ch-title">
+      <h2>状态机清算：接一层，背一层</h2>
+      <p>五起事故不是五个独立倒霉，是同一句话的五次显影</p>
+    </div>
+  </div>
+  <div class="ch-body">
+    <p class="lede">把五起事故摆上同一张桌子，会发现它们共享同一个结构：每接一层别人的能力，就同时接回来一台藏在暗处的状态机；文档介绍的是按钮，事故介绍的是按钮背后的表。</p>
+    <div class="tbl-wrap"><table class="tbl">
+      <tr><th>借来的能力层</th><th>它藏的状态</th><th>漏出的样子</th><th>我们的止损</th></tr>
+      <tr><td>OpenClaw 网关（×2 台）</td><td>boot 台账、profile 锁、端口配置、双状态目录</td><td>双 LISTENING、半死假活</td><td>统一端口 + 摘除僵尸行</td></tr>
+      <tr><td>OS 的 pid 表</td><td>整数池回收复用</td><td>6240 易主 WMI 服务</td><td>成对校验（pid+启动时间）</td></tr>
+      <tr><td>Coding 套餐渠道</td><td>客户端白名单、准入策略</td><td>200 谎报 / 403 组禁</td><td>测活读内容</td></tr>
+      <tr><td>执行器重试</td><td>退避预算（对空回复不设限）</td><td>31 发 / 206 秒</td><td>重启止损 + 预算上限</td></tr>
+      <tr><td>Easel 自己的 runtime</td><td>code_digest 指纹守护</td><td>改代码即自爆，旧代理残留占端口</td><td>已成文档的重启纪律</td></tr>
+    </table></div>
+    <p>最后一行是故意放进去的：Easel 自己那台「改代码即自杀」的 runtime，同样是「接一层背一层」——只不过这层是自己写的，状态机自己认得，文档自己补了。这恰好说明问题不在「别人家的」，而在<b>有没有把状态机当一等公民写进文档</b>。同一个人写的产品，认真对待状态的那层，事故后只需要重启；不认真对待的那层，事故后需要一本台账来查。</p>
+    <div class="demo" id="d5">
+      <div class="demo-head"><span class="demo-tag">DEMO 05 · 接入累加器</span><span class="demo-title">每接一层，背一层<span class="hint">点「接入一项能力」，看总账怎么涨</span></span></div>
+      <div class="demo-body">
+        <div class="d5-stack" id="d5-stack"></div>
+        <div class="readout"><span>已接能力层：<b id="d5-layers">1</b></span><span>背回隐藏状态：<b id="d5-states">2</b></span><span>卸载残留行：<b id="d5-residue">0</b></span></div>
+        <div><button class="ghost" id="d5-add">接入一项能力</button> <button class="ghost" id="d5-remove">卸载最近一层</button> <button class="ghost" id="d5-reset">全部重置</button></div>
+      </div>
+      <div class="demo-foot">确定性模型：层数、状态数、标签对照本文五起事故与 runtime_host.py 的真实守护项（code_digest/boot 台账/租约/配对表）；「卸载残留 1 行」为示意规则——对应 6240 案例里「死进程的行还活着」。全序列固定，可重置重放。</div>
+    </div>
+    <p><b>为什么「接能力」总是顺手的，「接状态」总是漏掉的？</b>因为能力写在文档第一页，状态藏在 schema 第十张表。集成者按文档点按钮，一切工作；状态机在你不知道的目录里安静生长，直到某天它决定你的网关「已经在运行」。所以接入之前值得问三个问题，这三个问题不是从哪本书抄的，是从这三天里抄的：</p>
+    <div class="pull"><b>① 它的状态写在哪、有几份副本？</b>端口有三份副本就是事故温床——问出「几份」这个词，一半的分裂已经防掉了。<br/><b>② 它用什么判活？</b>如果答案是裸 pid，请对照第三章：号牌会易主，启动时间才是指纹。<br/><b>③ 它失败时会重试吗、上限在哪？</b>找不到上限，就假设上限是「你的额度」。</div>
+    <h3>这本台账的性格清单</h3>
+    <p>把六章合上，这本事故台账的教训可以列成一张单子——每一条都能在日志里找到自己的时间戳：</p>
+    <div class="rules">
+      <div class="rule"><b>LEDGER 01 · 端口与版本号一样，要有单一来源</b><p>.env、openclaw.json、runtime-launch.json 三个说法都能自圆其说，赢的却是启动顺序。跨层契约必须在某一层里指认唯一权威——其余层只许引用，不许另存副本。</p></div>
+      <div class="rule"><b>LEDGER 02 · 假活比死更贵</b><p>healthz 绿 ≠ ready。半死状态探活全绿、能力全无，是最费人时的故障形态。凡是自己产品里有「两段式启动」的地方，第二段的完成必须成为一等公民的指标。</p></div>
+      <div class="rule"><b>LEDGER 03 · 号牌会易主，指纹要成对</b><p>pid 判活只证明「有个进程」，不证明「还是那个进程」。台账类记录一律配 started_at 成对校验——同一份代码库里正确的示范早就存在（agent_database_leases 的 owner_start_time），别让两种传统并存。</p></div>
+      <div class="rule"><b>LEDGER 04 · 重试要有预算、要有分诊</b><p>空回复是三种病的同一个症状：网络抖动、上游限流、业务拒绝。哪怕只分「有内容/无内容」一刀，31 发也能变 1 发。识别限额类错误不消耗重试预算——官方 2026.11.3 的这条日志值得贴在执行器门上。</p></div>
+      <div class="rule"><b>LEDGER 05 · 测活读一次正文</b><p>状态码是传输层的事实，不是业务层的事实。「已连通 · 通过」四个字值不值信任，取决于测活闸读没读包裹里的东西。</p></div>
+    </div>
+    <p>至此，造物手记的集成篇补上一块：VOL.10 让 Agent 学会挑模型，VOL.11 让 Agent 学会指挥 Agent，VOL.12 让 Agent 独自值守，VOL.13 离开 Agent 修了张照片——这一篇回到工地，把「接别人的能力」背回来的五台状态机逐台清算。</p>
+    <h3>结语</h3>
+    <p>五起事故没有一起需要天才去犯，也没有一起需要天才去修——它们需要的只是把状态机当回事：<b>写文档的时候多写一句「状态存在哪」，接能力的时候多问一句「你把什么留在我家了」</b>。借来的机器终归要还，还不掉的，就写进台账。</p>
+    <p class="scope">这篇没解决的：渠道白名单本身（准入策略不可谈判，Easel 侧只能换标准 API 渠道或换 Codex 底座）；OpenClaw 2026.11.3 升级评估（官方已给出对症的重试预算修复，升级是独立任务）；boot 台账成对校验（已向上游复述，待验证）。</p>
+  </div>
+</section>
+
+</main>
+
+<footer class="wrap site-foot">
+  <div>
+    <div>造物手记 VOL.14 · 借来的状态机</div>
+    <div style="margin-top:5px">INCIDENT LEDGER / 2026.11 / 单文件 · 零依赖 · 确定性小样</div>
+  </div>
+  <div class="foot-note">标本 easel 为本机自研工作台（main @121dd211 · v0.50.3，2026-11-12～14 排障现场）。本文引文核对到 scripts/gateway.ps1、easel/runtime_worker.py、easel/runtime_host.py、data/openclaw/openclaw.json、data/logs/failure-events.jsonl、data/logs/raw-stream.jsonl、data/.execution-service/service.log 真实内容；netstat 双 LISTENING 与 gateway.error.log 的 09:26 块因日志被后续重启覆盖，以排障现场转录为准并已标注。五枚小样为确定性模型：时间线与间隔序列照抄实录，参数摊在明面上。字体为 LXGW 文楷（OFL 许可，见 assets/fonts/OFL.txt）。插图由 GPT 系图像模型生成。</div>
+</footer>
+
+<script>
+'use strict';
+/* ---------- DEMO 01 · 端口分裂推演（确定性五步序列） ---------- */
+(function(){
+  var steps = [
+    {log:'[23:16:55] 手动启动：gateway.ps1 读 .env → OPENCLAW_PORT=18789', a:'运行 · :18789', b:'未启动', r:'——', hi:'d1-env'},
+    {log:'[23:19:xx] 启动器启动：读 runtime-launch.json → gatewayPort=37289', a:'运行 · :18789', b:'运行 · :37289', r:'——', hi:'d1-rl'},
+    {log:'[netstat] 127.0.0.1:18789 LISTENING 6240 ／ 127.0.0.1:37289 LISTENING 1112', a:'运行 · :18789', b:'运行 · :37289', r:'——', hi:null},
+    {log:'[chat-transport] HTTP 直连探不通 :37289/v1/chat/completions，已退回 CLI 传输', a:'运行 · :18789', b:'运行 · :37289', r:'探 37289 → 失败', hi:'d1-oc'},
+    {log:'[结果] 每条消息多付一次客户端冷启动；两台网关谁也没接到这条消息', a:'运行 · :18789', b:'运行 · :37289', r:'两头落空', hi:null}
+  ];
+  var i = 0, logEl = document.getElementById('d1-log');
+  function render(step){
+    var n = steps.indexOf(step);
+    logEl.textContent += (i===1? '': '\n') + step.log;
+    document.getElementById('d1-ra').textContent = step.a;
+    document.getElementById('d1-rb').textContent = step.b;
+    document.getElementById('d1-rr').textContent = step.r;
+    ['d1-env','d1-oc','d1-rl'].forEach(function(id){
+      document.getElementById(id).classList.toggle('hot', id===step.hi);
+    });
+    document.getElementById('d1-next').disabled = (i>=steps.length);
+  }
+  document.getElementById('d1-next').addEventListener('click', function(){
+    if(i<steps.length){ render(steps[i]); i++; if(i===steps.length){ logEl.textContent += '\n[终] 五步重放完毕 —— 全部为实录序列。'; this.disabled=true; } }
+  });
+  document.getElementById('d1-reset').addEventListener('click', function(){
+    i=0; logEl.textContent='等待重放……';
+    document.getElementById('d1-ra').textContent='未启动';
+    document.getElementById('d1-rb').textContent='未启动';
+    document.getElementById('d1-rr').textContent='——';
+    document.getElementById('d1-next').disabled=false;
+    ['d1-env','d1-oc','d1-rl'].forEach(function(id){ document.getElementById(id).classList.remove('hot'); });
+  });
+})();
+
+/* ---------- DEMO 02 · 台账、发号窗与那行 NULL（四幕确定性序列） ---------- */
+(function(){
+  var logEl = document.getElementById('d2-log'), busy=false;
+  var plays = [
+    ['幕一 · 死亡','[23:16:55] 网关启动，台账写入：pid=6240, completed_at=NULL','[23:5x] 网关被强杀 —— finally 没来得及跑，行留在表里'],
+    ['幕二 · 易主','[次日 08:15:43] 操作系统发号窗：pid 6240 → WMIRegistrationService.exe','[现状] 台账一行没变；世界的 6240 已经换了主人'],
+    ['幕三 · 撞锁','[09:26:12] 新网关启动 → 查台账 → 未完成行存在 → 问 OS「6240 活着吗」','[09:26:12] OS：活着。→ Gateway failed to start: gateway already running (pid 6240); lock timeout after 5000ms'],
+    ['幕四 · 半死','[09:26:14] Port 18789 is already in use（探活绿、执行器死）','[09:23/09:43] 用户消息 123ms / 272ms 秒败：agent_execution_failed']
+  ];
+  function step(txt){ logEl.textContent += '\n' + txt; }
+  document.getElementById('d2-play').addEventListener('click', function(){
+    if(busy) return; busy=true;
+    logEl.textContent=''; document.getElementById('d2-zombie').textContent='存在';
+    document.getElementById('d2-done').textContent='NULL'; document.getElementById('d2-done').className='bad';
+    document.getElementById('d2-who').textContent='当前持有人：？（待查）';
+    document.getElementById('d2-verdict').textContent='——';
+    var k=0;
+    var t=setInterval(function(){
+      if(k>=plays.length){ clearInterval(t); busy=false;
+        document.getElementById('d2-verdict').textContent='拒绝启动（假活）';
+        return; }
+      step('—— '+plays[k][0]+' ——'); step(plays[k][1]); step(plays[k][2]);
+      if(k===0){ document.getElementById('d2-who').textContent='6240：网关进程（已死）'; }
+      if(k===1){ document.getElementById('d2-who').textContent='6240：WMIRegistrationService.exe（08:15:43 领号）'; document.getElementById('d2-num').classList.add('swap'); }
+      if(k===2){ document.getElementById('d2-verdict').textContent='等锁 5 秒 → 放弃'; }
+      k++;
+    }, 900);
+  });
+  document.getElementById('d2-surg').addEventListener('click', function(){
+    if(busy) return;
+    logEl.textContent += '\n—— 外科手术 ——';
+    logEl.textContent += '\n[sqlite] DELETE FROM gateway_boot_lifecycle WHERE pid=6240 AND completed_at_ms IS NULL';
+    logEl.textContent += '\n[sqlite] DELETE FROM agent_database_leases WHERE owner_pid=6240';
+    logEl.textContent += '\n[09:54:43] 下一台网关启动 → 日志走到 ready → 117 技能回到工作台';
+    document.getElementById('d2-zombie').textContent='已摘除';
+    document.getElementById('d2-done').textContent='（行已删除）'; document.getElementById('d2-done').className='';
+    document.getElementById('d2-verdict').textContent='ready ✓';
+  });
+  document.getElementById('d2-reset').addEventListener('click', function(){
+    busy=false; logEl.textContent='等待重放……点「重放四幕」开始。';
+    document.getElementById('d2-verdict').textContent='——';
+    document.getElementById('d2-zombie').textContent='存在';
+    document.getElementById('d2-done').textContent='NULL'; document.getElementById('d2-done').className='bad';
+    document.getElementById('d2-who').textContent='当前持有人：？（待查）';
+    document.getElementById('d2-num').classList.remove('swap');
+  });
+})();
+
+/* ---------- DEMO 03 · 200 测活闸（确定性响应） ---------- */
+(function(){
+  var tested=false;
+  document.getElementById('d3-test').addEventListener('click', function(){
+    var readContent = document.getElementById('d3-gateB').checked;
+    tested=true;
+    var v=document.getElementById('d3-verdict'), ui=document.getElementById('d3-ui'), af=document.getElementById('d3-after');
+    if(readContent){
+      v.textContent='失败（检测到拒绝文案）'; v.className='bad';
+      ui.textContent='渠道未通过（应显示）'; af.textContent='阻止接入，0 次烧额度';
+    }else{
+      v.textContent='通过（HTTP 200）'; v.className='';
+      ui.textContent='渠道已连通 · 通过（现状）'; af.textContent='放行 → 31 发空回复等着你（见 DEMO 04）';
+    }
+  });
+  document.getElementById('d3-reset').addEventListener('click', function(){
+    tested=false;
+    document.getElementById('d3-verdict').textContent='——'; document.getElementById('d3-verdict').className='';
+    document.getElementById('d3-ui').textContent='——';
+    document.getElementById('d3-after').textContent='——';
+  });
+})();
+
+/* ---------- DEMO 04 · 31 发重放台（实录间隔序列，加速 20 倍） ---------- */
+(function(){
+  var gaps=[6.6,5.8,7.3,4.2,6.0,4.5,4.5,4.6,4.5,5.1,2.9,6.4,13.6,21.3,5.2,2.8,6.2,5.0,8.1,4.2,8.1,8.4,6.9,10.0,12.9,5.1,6.9,3.3,7.1,7.3];
+  var total=31, SPEED=20, timer=null, n=0, t=0, tl=document.getElementById('d4-tl');
+  function pad(){ var s=''; for(var i=0;i<31;i++) s+='<i'+(i<n?' class="on"':'')+'></i>'; return s; }
+  function render(){
+    document.getElementById('d4-n').textContent=n;
+    document.getElementById('d4-t').textContent=t.toFixed(1);
+    document.getElementById('d4-gap').textContent=(n>0&&n<=gaps.length)? gaps[n-1] : '—';
+    document.getElementById('d4-empty').textContent=n;
+    tl.innerHTML=pad();
+  }
+  function end(){
+    clearInterval(timer); timer=null;
+    document.getElementById('d4-end').textContent = document.getElementById('d4-bounded').checked ? '有界：3 发后熔断 ✓' : '上游仍在拒绝，永不停止（实录到 31 发为止）';
+  }
+  document.getElementById('d4-play').addEventListener('click', function(){
+    if(timer) return;
+    n=0; t=0; render();
+    document.getElementById('d4-end').textContent='重放中……';
+    var bounded=document.getElementById('d4-bounded').checked;
+    document.getElementById('d4-mode').textContent= bounded? '有界重试（3 次封顶）' : '无限重试（实录）';
+    timer=setInterval(function(){
+      n++;
+      if(n>1){ var g=gaps[Math.min(n-2,gaps.length-1)]; t+=g/SPEED; }
+      render();
+      if(bounded && n>=3){ return end(); }
+      if(n>=total){ return end(); }
+    }, 1000/SPEED);
+  });
+  document.getElementById('d4-stop').addEventListener('click', function(){ if(timer){ clearInterval(timer); timer=null; document.getElementById('d4-end').textContent='已手动停止（这是现实里没有的按钮）'; } });
+  document.getElementById('d4-reset').addEventListener('click', function(){
+    if(timer){ clearInterval(timer); timer=null; }
+    n=0; t=0; render(); document.getElementById('d4-end').textContent='等待开始';
+    document.getElementById('d4-mode').textContent='无限重试（实录）';
+    document.getElementById('d4-bounded').checked=false;
+  });
+  render();
+})();
+
+/* ---------- DEMO 05 · 接入累加器（固定序列 + 固定残留规则） ---------- */
+(function(){
+  var layers=[
+    {name:'Easel 核心（自研）', states:['会话锁','启动状态文件'], src:'runtime_host.py'},
+    {name:'OpenClaw 网关', states:['boot 台账','profile 锁','端口配置','pid 记录'], src:'对应事故 01/02/03'},
+    {name:'消息渠道接入', states:['设备配对表','渠道游标'], src:'device_pairing_paired'},
+    {name:'技能市场', states:['技能清单缓存','准入名单'], src:'skills/lib'},
+    {name:'记忆插件', states:['梦境账本','叙事队列'], src:'memory-core'},
+    {name:'浏览器控制', states:['profile 目录','配对凭证'], src:'browser plugin'}
+  ];
+  var taken=1, residue=0;
+  function render(){
+    var st=document.getElementById('d5-stack'); st.innerHTML='';
+    for(var i=0;i<taken;i++){
+      var L=layers[Math.min(i,layers.length-1)];
+      var d=document.createElement('div'); d.className='d5-layer'+(i===0?' base':'');
+      d.innerHTML='<b>'+(i===0? L.name : '＋ '+L.name)+'</b><span>'+L.states.join(' · ')+'</span><i>'+L.src+'</i>';
+      if(i===taken-1 && residue>0 && i>0) d.classList.add('residue');
+      st.appendChild(d);
+    }
+    document.getElementById('d5-layers').textContent=taken;
+    var states=0; for(var j=0;j<Math.min(taken,layers.length);j++){ states+=layers[j].states.length; }
+    document.getElementById('d5-states').textContent=states;
+    document.getElementById('d5-residue').textContent=residue;
+    document.getElementById('d5-add').disabled = taken>=layers.length;
+    document.getElementById('d5-remove').disabled = taken<=1;
+  }
+  document.getElementById('d5-add').addEventListener('click', function(){ if(taken<layers.length){ taken++; render(); } });
+  document.getElementById('d5-remove').addEventListener('click', function(){ if(taken>1){ taken--; residue++; render(); } });
+  document.getElementById('d5-reset').addEventListener('click', function(){ taken=1; residue=0; render(); });
+  render();
+})();
+</script>
+</body>
+</html>
