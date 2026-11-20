@@ -1,4 +1,4 @@
-# 借来的状态机 · 造物手记 VOL.14
+# 借来的状态机 · 造物手记 VOL.22
 
 线上：<https://starrysea1412.github.io/agent-borrowed-states/>
 

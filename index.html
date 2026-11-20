@@ -4,8 +4,8 @@
 <meta charset="UTF-8"/>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22%3E%3Crect x=%224%22 y=%223%22 width=%2216%22 height=%2218%22 rx=%221.5%22 fill=%22%23faf9f3%22 stroke=%22%23333e48%22/%3E%3Ccircle cx=%229%22 cy=%229%22 r=%222.4%22 fill=%22%23b5482a%22/%3E%3C/svg%3E"/>
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<meta name="description" content="造物手记 VOL.14 · 借来的状态机——Easel 接入 OpenClaw 的三天，五起事故的完整复盘：双网关分裂、僵尸启动记录、PID 复用、200 谎报、无限重试烧额度。"/>
-<title>借来的状态机 · 造物手记 VOL.14</title>
+<meta name="description" content="造物手记 VOL.22 · 借来的状态机——Easel 接入 OpenClaw 的三天，五起事故的完整复盘：双网关分裂、僵尸启动记录、PID 复用、200 谎报、无限重试烧额度。"/>
+<title>借来的状态机 · 造物手记 VOL.22</title>
 <style>
 /* 《住进机房的 Agent》· 造物手记 VOL.12
    机架走线图：机房纸、石墨蓝黑、安全橙、LED 绿 —— 一面挂满巡检面板的机架立面。 */
@@ -358,7 +358,7 @@ input[type=text]:focus,select:focus{outline:2px solid var(--signal);outline-offs
 }
 
 
-/* ---- VOL.14 小样专属 ---- */
+/* ---- VOL.22 小样专属 ---- */
 .term{background:var(--code-bg);border-radius:8px;overflow:hidden;border:1px solid var(--line)}
 .term-bar{display:flex;align-items:center;gap:6px;padding:7px 12px;background:rgba(255,255,255,.06);border-bottom:1px solid rgba(255,255,255,.08)}
 .term-bar i{width:9px;height:9px;border-radius:50%;background:var(--line-strong);display:inline-block}
@@ -418,11 +418,11 @@ td.bad,.bad{color:var(--signal)}
 <header class="wrap masthead">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><rect x="4" y="3" width="16" height="18" rx="1.5" stroke="#333e48" stroke-width="1.4"/><path d="M4 8h16M4 13h16M4 18h16" stroke="#333e48" stroke-width="1.1"/><circle cx="8" cy="5.5" r="1" fill="#3f8f5f"/><circle cx="8" cy="10.5" r="1" fill="#b5482a"/><circle cx="8" cy="15.5" r="1" fill="#3f8f5f"/></svg></span>
-    <span>造物手记 <small>VOL.14</small></span>
+    <span>造物手记 <small>VOL.22</small></span>
   </div>
   <div class="edition">
     <span class="pack"><i class="pack-dot" aria-hidden="true"></i>INCIDENT LEDGER / 事故台账</span>
-    <span>BOARD 14 · 2026.11</span>
+    <span>BOARD 22 · 2026.11</span>
   </div>
 </header>
 
@@ -446,7 +446,7 @@ td.bad,.bad{color:var(--signal)}
       <div class="screen-img">
         <img src="assets/art/hero.webp" alt="单眼折纸鸟工程师一手举扳手一手捧台账，面前一台由收音机壳、钟表齿轮、生锈阀门拼装的机器，每个零件挂着写满符号的标签吊牌" width="1152" height="832"/>
       </div>
-      <div class="tc-bar"><span>BOARD 14</span><span class="tc">CONFIG · LOCK · PID · 200 · RETRY</span></div>
+      <div class="tc-bar"><span>BOARD 22</span><span class="tc">CONFIG · LOCK · PID · 200 · RETRY</span></div>
     </div>
     <figcaption><span><b>FIG. 00</b> 一台机器，每个零件都拖着别人的状态</span><span>INK &amp; GOUACHE / 2026</span></figcaption>
   </figure>
@@ -733,8 +733,9 @@ CreationDate : 2026-11-14 8:15:43</pre></div>
 
 <footer class="wrap site-foot">
   <div>
-    <div>造物手记 VOL.14 · 借来的状态机</div>
+    <div>造物手记 VOL.22 · 借来的状态机</div>
     <div style="margin-top:5px">INCIDENT LEDGER / 2026.11 / 单文件 · 零依赖 · 确定性小样</div>
+    <div style="margin-top:10px"><a href="https://starrysea1412.github.io/agent-lineage/">← VOL.21 给 Agent 修家谱</a> · <a href="https://starrysea1412.github.io/makers-notebook/">☰ 全系列目录</a></div>
   </div>
   <div class="foot-note">标本 easel 为本机自研工作台（main @121dd211 · v0.50.3，2026-11-12～14 排障现场）。本文引文核对到 scripts/gateway.ps1、easel/runtime_worker.py、easel/runtime_host.py、data/openclaw/openclaw.json、data/logs/failure-events.jsonl、data/logs/raw-stream.jsonl、data/.execution-service/service.log 真实内容；netstat 双 LISTENING 与 gateway.error.log 的 09:26 块因日志被后续重启覆盖，以排障现场转录为准并已标注。五枚小样为确定性模型：时间线与间隔序列照抄实录，参数摊在明面上。字体为 LXGW 文楷（OFL 许可，见 assets/fonts/OFL.txt）。插图由 GPT 系图像模型生成。</div>
 </footer>
